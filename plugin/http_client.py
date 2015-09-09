@@ -77,9 +77,9 @@ def do_request(block, buf):
       data = '\n'.join(block)
 
     request_settings = dict((m.groups() for m in (REQUEST_SETTING_REGEX.match(l) for l in buf) if m))
-    verify = False
+    verify = True
     if 'verify' in request_settings:
-        verify==strtobool(request_settings['verify'])
+        verify=bool(strtobool(request_settings['verify']))
 
     if (not verify):
       requests.packages.urllib3.disable_warnings()
@@ -93,7 +93,7 @@ def do_request(block, buf):
             response_body = json.dumps(
                 json.loads(response.text), sort_keys=True, indent=2,
                 separators=(',', ': '),
-                ensure_ascii=vim.eval('g:http_client_json_escape_utf')=='1')
+                ensure_ascii=ensure_ascii_flag())
         except ValueError:
             pass
 
@@ -107,6 +107,12 @@ def do_request(block, buf):
 
 
 # Vim methods.
+
+def ensure_ascii_flag():
+    if not from_cmdline:
+        vim.eval('g:http_client_json_escape_utf')=='1'
+    else:
+        True
 
 def vim_filetypes_by_content_type():
     return {
@@ -168,10 +174,25 @@ def run_tests():
     def extract_json(resp):
         return json.loads(''.join([ l for l in resp[0] if not l.startswith('//') ]))
 
+    def extract_status_code(resp):
+        code = [l.split(':') for l in resp[0] if l.startswith('// status code:')][0][1]
+        return code.strip()
+
     def test(assertion, test):
         print 'Test %s: %s' % ('passed' if assertion else 'failed', test)
         if not assertion:
             raise AssertionError
+    
+    def test_for_exception(exception, test, testfun, *testfunargs):
+        try:
+            testfun(*testfunargs)
+            print 'Test failed: no Exception raised'
+        except exception:
+            print 'Test passed: %s' % (test)
+            return
+        except Exception as e:
+            print('Test failed: unexpected Exception:', e)
+            return
 
     resp = extract_json(do_request([
         '# comment',
@@ -207,6 +228,14 @@ def run_tests():
         'formb=b',
     ], [ '# $global = httpbin.org']))
     test(resp['form']['forma'] == 'a', 'Global variables are substituted.')
+
+    resp = extract_status_code(do_request([
+        'GET https://expired.badssl.com/'
+    ], [ '# $$verify = false']))
+    test(resp == '200', 'Verify SSL request setting is subsituted and changes default behaviour to allow bad ssl.')
+
+    test_for_exception(requests.exceptions.SSLError,  'Verify that Error is still thrown if SSL Cert verification is set to true.',
+     do_request, ['GET https://expired.badssl.com/'], [ '# $$verify = true'])
 
     import os
     from tempfile import NamedTemporaryFile
