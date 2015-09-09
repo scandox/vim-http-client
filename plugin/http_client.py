@@ -1,6 +1,7 @@
 import json
 import re
 import requests
+from distutils.util import strtobool
 
 from_cmdline = False
 try:
@@ -18,7 +19,7 @@ HEADER_REGEX = re.compile('^([^()<>@,;:\<>/\[\]?={}]+):\\s*(.*)$')
 VAR_REGEX = re.compile('^# ?(:[^: ]+)\\s*=\\s*(.+)$')
 GLOBAL_VAR_REGEX = re.compile('^# ?(\$[^$ ]+)\\s*=\\s*(.+)$')
 FILE_REGEX = re.compile("!((?:file)|(?:(?:content)))\((.+)\)")
-
+REQUEST_SETTING_REGEX = re.compile('^# ?\\${2}([^$ ]+)\\s*=\\s*(.+)$')
 
 def replace_vars(string, variables):
     for var, val in variables.items():
@@ -75,7 +76,15 @@ def do_request(block, buf):
       # Straight data: just send it off as a string.
       data = '\n'.join(block)
 
-    response = requests.request(method, url, headers=headers, data=data, files=files)
+    request_settings = dict((m.groups() for m in (REQUEST_SETTING_REGEX.match(l) for l in buf) if m))
+    verify = False
+    if 'verify' in request_settings:
+        verify==strtobool(request_settings['verify'])
+
+    if (not verify):
+      requests.packages.urllib3.disable_warnings()
+
+    response = requests.request(method, url, headers=headers, data=data, files=files, verify=verify)
     content_type = response.headers.get('Content-Type', '').split(';')[0]
 
     response_body = response.text
